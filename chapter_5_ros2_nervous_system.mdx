@@ -1,0 +1,585 @@
+# Chapter 5: ROS 2 - The Robotic Nervous System
+
+## Overview
+
+Robot Operating System 2 (ROS 2) serves as the central nervous system for modern robotics applications. Unlike its predecessor, ROS 2 addresses critical limitations such as real-time support, security, and scalability. This chapter explores ROS 2 architecture, communication patterns, and practical implementation techniques essential for developing sophisticated humanoid robotics systems.
+
+## Learning Objectives
+
+By the end of this chapter, readers will be able to:
+- Understand the fundamental architecture of ROS 2
+- Implement nodes, topics, services, and actions
+- Configure Quality of Service (QoS) policies for different robotic applications
+- Design effective communication patterns for complex robotic systems
+- Debug and monitor ROS 2 systems efficiently
+
+## 5.1 Introduction to ROS 2 Architecture
+
+### 5.1.1 Evolution from ROS 1 to ROS 2
+
+ROS 2 represents a significant architectural overhaul from its predecessor. While ROS 1 relied heavily on a centralized Master node and XML-RPC communications, ROS 2 adopts a distributed architecture based on DDS (Data Distribution Service). This shift enables:
+
+- **Real-time capabilities**: Deterministic message delivery and predictable timing
+- **Security**: Authentication, encryption, and access control mechanisms
+- **Scalability**: Support for large-scale multi-robot systems
+- **Cross-platform compatibility**: Consistent behavior across different operating systems
+
+### 5.1.2 DDS-Based Communication Layer
+
+DDS (Data Distribution Service) provides the underlying communication infrastructure for ROS 2. Key advantages include:
+
+- **Decentralized operation**: No single point of failure
+- **Quality of Service controls**: Configurable reliability, durability, and liveliness
+- **Language independence**: Native support for multiple programming languages
+- **Transport flexibility**: Support for shared memory, UDP, TCP, and other transports
+
+## 5.2 Core Concepts and Architecture
+
+### 5.2.1 Nodes
+
+Nodes are the fundamental execution units in ROS 2. Each node typically represents a single process that performs specific functions within the robotic system.
+
+```cpp
+// C++ example of a minimal ROS 2 node
+#include "rclcpp/rclcpp.hpp"
+
+class MinimalNode : public rclcpp::Node
+{
+public:
+    MinimalNode() : Node("minimal_node")
+    {
+        RCLCPP_INFO(this->get_logger(), "Minimal node created");
+    }
+};
+
+int main(int argc, char * argv[])
+{
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<MinimalNode>());
+    rclcpp::shutdown();
+    return 0;
+}
+```
+
+```python
+# Python example of a minimal ROS 2 node
+import rclpy
+from rclpy.node import Node
+
+class MinimalNode(Node):
+    def __init__(self):
+        super().__init__('minimal_node')
+        self.get_logger().info('Minimal node created')
+
+def main(args=None):
+    rclpy.init(args=args)
+    minimal_node = MinimalNode()
+    rclpy.spin(minimal_node)
+    minimal_node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+```
+
+### 5.2.2 Topics and Publishers/Subscribers
+
+Topics enable asynchronous communication between nodes using a publish-subscribe pattern. Publishers send messages to topics, while subscribers receive messages from topics.
+
+```cpp
+// Publisher example
+#include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/string.hpp"
+
+class MinimalPublisher : public rclcpp::Node
+{
+public:
+    MinimalPublisher() : Node("minimal_publisher"), count_(0)
+    {
+        publisher_ = this->create_publisher<std_msgs::msg::String>("topic", 10);
+        timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(500),
+            std::bind(&MinimalPublisher::timer_callback, this));
+    }
+
+private:
+    void timer_callback()
+    {
+        auto message = std_msgs::msg::String();
+        message.data = "Hello, world! " + std::to_string(count_++);
+        RCLCPP_INFO(this->get_logger(), "Publishing: '%s'", message.data.c_str());
+        publisher_->publish(message);
+    }
+    rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
+    size_t count_;
+};
+```
+
+```python
+# Subscriber example
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+
+class MinimalSubscriber(Node):
+    def __init__(self):
+        super().__init__('minimal_subscriber')
+        self.subscription = self.create_subscription(
+            String,
+            'topic',
+            self.listener_callback,
+            10)
+        self.subscription  # prevent unused variable warning
+
+    def listener_callback(self, msg):
+        self.get_logger().info('I heard: "%s"' % msg.data)
+```
+
+### 5.2.3 Services
+
+Services provide synchronous request-response communication patterns, ideal for operations that require acknowledgment or return values.
+
+```cpp
+// Service server example
+#include "rclcpp/rclcpp.hpp"
+#include "example_interfaces/srv/add_two_ints.hpp"
+
+class MinimalService : public rclcpp::Node
+{
+public:
+    MinimalService() : Node("minimal_service")
+    {
+        using namespace std::placeholders;
+
+        service_ = this->create_service<example_interfaces::srv::AddTwoInts>(
+            "add_two_ints",
+            std::bind(&MinimalService::add, this, _1, _2));
+    }
+
+private:
+    void add(const example_interfaces::srv::AddTwoInts::Request::SharedPtr request,
+             const example_interfaces::srv::AddTwoInts::Response::SharedPtr response)
+    {
+        response->sum = request->a + request->b;
+        RCLCPP_INFO(this->get_logger(), "Incoming request\na: %ld, b: %ld",
+                    request->a, request->b);
+        RCLCPP_INFO(this->get_logger(), "Sending response: [%ld]", response->sum);
+    }
+    rclcpp::Service<example_interfaces::srv::AddTwoInts>::SharedPtr service_;
+};
+```
+
+```python
+# Service client example
+import rclpy
+from rclpy.node import Node
+from example_interfaces.srv import AddTwoInts
+
+class MinimalClientAsync(Node):
+    def __init__(self):
+        super().__init__('minimal_client_async')
+        self.cli = self.create_client(AddTwoInts, 'add_two_ints')
+
+        while not self.cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('service not available, waiting again...')
+
+        self.req = AddTwoInts.Request()
+
+    def send_request(self, a, b):
+        self.req.a = a
+        self.req.b = b
+        self.future = self.cli.call_async(self.req)
+        rclpy.spin_until_future_complete(self, self.future)
+        return self.future.result()
+```
+
+### 5.2.4 Actions
+
+Actions extend services with feedback and goal management, making them suitable for long-running operations with intermediate status updates.
+
+```cpp
+// Action server example
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
+#include "example_interfaces/action/fibonacci.hpp"
+
+class MinimalActionServer : public rclcpp::Node
+{
+public:
+    using Fibonacci = example_interfaces::action::Fibonacci;
+    using GoalHandleFibonacci = rclcpp_action::ServerGoalHandle<Fibonacci>;
+
+    explicit MinimalActionServer(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
+    : Node("minimal_action_server", options)
+    {
+        using namespace std::placeholders;
+
+        this->action_server_ = rclcpp_action::create_server<Fibonacci>(
+            this->get_node_base_interface(),
+            this->get_node_clock_interface(),
+            this->get_node_logging_interface(),
+            this->get_node_waitables_interface(),
+            "fibonacci",
+            std::bind(&MinimalActionServer::handle_goal, this, _1, _2),
+            std::bind(&MinimalActionServer::handle_cancel, this, _1),
+            std::bind(&MinimalActionServer::handle_accepted, this, _1));
+    }
+
+private:
+    rclcpp_action::Server<Fibonacci>::SharedPtr action_server_;
+
+    rclcpp_action::GoalResponse handle_goal(
+        const rclcpp_action::GoalUUID & uuid,
+        std::shared_ptr<const Fibonacci::Goal> goal)
+    {
+        RCLCPP_INFO(this->get_logger(), "Received goal request with order %d", goal->order);
+        return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+    }
+
+    rclcpp_action::CancelResponse handle_cancel(
+        const std::shared_ptr<GoalHandleFibonacci> goal_handle)
+    {
+        RCLCPP_INFO(this->get_logger(), "Received cancel request");
+        return rclcpp_action::CancelResponse::ACCEPT;
+    }
+
+    void handle_accepted(const std::shared_ptr<GoalHandleFibonacci> goal_handle)
+    {
+        using namespace std::placeholders;
+        // This needs to return quickly to avoid blocking the executor, so spin up a new thread
+        std::thread{std::bind(&MinimalActionServer::execute, this, _1), goal_handle}.detach();
+    }
+
+    void execute(const std::shared_ptr<GoalHandleFibonacci> goal_handle)
+    {
+        RCLCPP_INFO(this->get_logger(), "Executing goal");
+
+        // Create messages
+        auto feedback = std::make_shared<Fibonacci::Feedback>();
+        auto result = std::make_shared<Fibonacci::Result>();
+
+        auto & sequence = result->sequence;
+        sequence.push_back(0);
+        sequence.push_back(1);
+
+        auto goal = goal_handle->get_goal();
+        for (int i = 1; (i < goal->order) && (rclcpp::ok()); ++i) {
+            // Check if there is a cancel request
+            if (goal_handle->is_canceling()) {
+                result->sequence.clear();
+                goal_handle->canceled(result);
+                RCLCPP_INFO(this->get_logger(), "Goal canceled");
+                return;
+            }
+
+            // Send feedback
+            feedback->sequence = sequence;
+            goal_handle->publish_feedback(feedback);
+
+            // Sleep to simulate work
+            rclcpp::sleep_for(std::chrono::milliseconds(500));
+
+            // Calculate new element
+            uint64_t last = sequence[i];
+            uint64_t second_last = sequence[i - 1];
+            sequence.push_back(second_last + last);
+        }
+
+        // Check if goal is done
+        if (rclcpp::ok()) {
+            goal_handle->succeed(result);
+            RCLCPP_INFO(this->get_logger(), "Goal succeeded");
+        }
+    }
+};
+```
+
+## 5.3 Quality of Service (QoS) Policies
+
+QoS policies allow fine-tuning of communication behavior to meet specific application requirements:
+
+### 5.3.1 Reliability Policy
+- **Reliable**: Ensures all messages are delivered (suitable for critical data)
+- **Best Effort**: Does not guarantee message delivery (suitable for sensor data)
+
+### 5.3.2 Durability Policy
+- **Transient Local**: Keeps historical data for late-joining subscribers
+- **Volatile**: Only delivers new messages to currently active subscribers
+
+### 5.3.3 History Policy
+- **Keep Last**: Maintains a fixed number of most recent messages
+- **Keep All**: Stores all messages (use cautiously due to memory constraints)
+
+```cpp
+// Example of configuring QoS for different use cases
+#include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
+#include "geometry_msgs/msg/twist.hpp"
+
+class QoSDemo : public rclcpp::Node
+{
+public:
+    QoSDemo() : Node("qos_demo")
+    {
+        // Configuration for sensor data (best effort, volatile)
+        rclcpp::QoS sensor_qos_profile(10);
+        sensor_qos_profile.best_effort().volatile();
+        sensor_pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>(
+            "laser_scan", sensor_qos_profile);
+
+        // Configuration for control commands (reliable, transient local)
+        rclcpp::QoS control_qos_profile(10);
+        control_qos_profile.reliable().transient_local();
+        control_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(
+            "cmd_vel", control_qos_profile);
+    }
+
+private:
+    rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr sensor_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr control_pub_;
+};
+```
+
+## 5.4 Communication Patterns for Robotics
+
+### 5.4.1 Publish-Subscribe Pattern
+Ideal for sensor data distribution and status updates where multiple subscribers may be interested in the same information.
+
+### 5.4.2 Client-Server Pattern
+Suitable for operations requiring acknowledgment or returning computed results, such as path planning or inverse kinematics.
+
+### 5.4.3 Action-Based Pattern
+Appropriate for long-running operations with intermediate feedback, such as navigation missions or manipulation tasks.
+
+## 5.5 Lifecycle Management
+
+ROS 2 provides lifecycle management for nodes that need to transition through different states:
+
+```cpp
+#include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include "rclcpp_lifecycle/lifecycle_publisher.hpp"
+
+class LifecycleDemo : public rclcpp_lifecycle::LifecycleNode
+{
+public:
+    LifecycleDemo() : rclcpp_lifecycle::LifecycleNode("lifecycle_demo") {}
+
+private:
+    // Callbacks for different lifecycle states
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+    on_configure(const rclcpp_lifecycle::State &)
+    {
+        // Initialize resources
+        pub_ = this->create_publisher<std_msgs::msg::String>("topic", 10);
+        RCLCPP_INFO(get_logger(), "Configured");
+        return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+    }
+
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+    on_activate(const rclcpp_lifecycle::State &)
+    {
+        pub_->on_activate();
+        RCLCPP_INFO(get_logger(), "Activated");
+        return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+    }
+
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+    on_deactivate(const rclcpp_lifecycle::State &)
+    {
+        pub_->on_deactivate();
+        RCLCPP_INFO(get_logger(), "Deactivated");
+        return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+    }
+
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+    on_cleanup(const rclcpp_lifecycle::State &)
+    {
+        pub_.reset();
+        RCLCPP_INFO(get_logger(), "Cleaned up");
+        return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+    }
+
+    std::shared_ptr<rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::String>> pub_;
+};
+```
+
+## 5.6 Multi-Robot Systems and Networking
+
+ROS 2 supports multi-robot coordination through distributed architectures:
+
+### 5.6.1 Domain IDs
+Different robots can operate on separate DDS domains to prevent interference:
+
+```bash
+# Set domain ID for different robots
+export ROS_DOMAIN_ID=1  # Robot 1
+export ROS_DOMAIN_ID=2  # Robot 2
+```
+
+### 5.6.2 Participant Discovery
+Robots discover each other automatically within the same domain, enabling seamless coordination.
+
+## 5.7 Debugging and Monitoring Tools
+
+### 5.7.1 Command Line Tools
+- `ros2 topic`: Monitor and interact with topics
+- `ros2 service`: Call and monitor services
+- `ros2 action`: Monitor and interact with actions
+- `ros2 node`: List and inspect nodes
+- `ros2 param`: Manage node parameters
+
+### 5.7.2 Visualization Tools
+- **RViz2**: 3D visualization for robot data
+- **rqt**: Graphical tools for monitoring and debugging
+- **rosbag2**: Data recording and playback
+
+```bash
+# Example of using command line tools
+ros2 topic list                      # List all topics
+ros2 topic echo /laser_scan          # Display laser scan data
+ros2 service call /set_parameters example_interfaces/srv/SetParameters "{parameters: [{name: 'param_name', value: {bool_value: true}}]}"
+```
+
+## 5.8 Performance Optimization
+
+### 5.8.1 Shared Memory Transport
+For high-bandwidth data transfer between processes on the same machine:
+
+```cpp
+// Enable intra-process communication for same-node communication
+rclcpp::executors::MultiThreadedExecutor exec(rclcpp::executor_options_t{}, 2);
+```
+
+### 5.8.2 Memory Management
+- Use intraprocess communication when possible
+- Optimize message sizes for network efficiency
+- Consider message serialization costs
+
+## 5.9 Best Practices
+
+### 5.9.1 Naming Conventions
+- Use consistent naming schemes for topics, services, and actions
+- Follow ROS 2 naming conventions: lowercase with underscores
+- Organize namespaces logically
+
+### 5.9.2 Error Handling
+- Implement robust error handling for network disconnections
+- Use timeouts appropriately for blocking operations
+- Log errors with sufficient context for debugging
+
+### 5.9.3 Resource Management
+- Properly clean up publishers, subscribers, and clients
+- Use smart pointers to manage resource lifetimes
+- Consider memory usage in long-running systems
+
+## 5.10 Integration with Physical AI Systems
+
+### 5.10.1 Sensor Integration
+ROS 2 provides standardized interfaces for various sensors:
+
+```cpp
+// Example of sensor integration
+#include "sensor_msgs/msg/imu.hpp"
+#include "sensor_msgs/msg/joint_state.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+
+class SensorIntegration : public rclcpp::Node
+{
+public:
+    SensorIntegration() : Node("sensor_integration")
+    {
+        imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
+            "imu/data", 10, std::bind(&SensorIntegration::imu_callback, this, _1));
+
+        joint_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
+            "joint_states", 10, std::bind(&SensorIntegration::joint_state_callback, this, _1));
+
+        odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            "odom", 10, std::bind(&SensorIntegration::odom_callback, this, _1));
+    }
+
+private:
+    void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg)
+    {
+        // Process IMU data for balance control
+    }
+
+    void joint_state_callback(const sensor_msgs::msg::JointState::SharedPtr msg)
+    {
+        // Process joint positions for feedback
+    }
+
+    void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
+    {
+        // Process odometry for navigation
+    }
+
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+};
+```
+
+### 5.10.2 AI System Integration
+Connecting AI systems with ROS 2 for perception and decision-making:
+
+```cpp
+// Example of AI integration
+#include "std_msgs/msg/string.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
+
+class AIBridge : public rclcpp::Node
+{
+public:
+    AIBridge() : Node("ai_bridge")
+    {
+        perception_sub_ = this->create_subscription<std_msgs::msg::String>(
+            "vision_output", 10, std::bind(&AIBridge::perception_callback, this, _1));
+
+        decision_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
+            "navigation_goal", 10);
+    }
+
+private:
+    void perception_callback(const std_msgs::msg::String::SharedPtr msg)
+    {
+        // Process AI perception output and generate navigation commands
+        if (msg->data.find("obstacle") != std::string::npos) {
+            // Generate alternative path
+            geometry_msgs::msg::PoseStamped goal_msg;
+            // ... populate goal message
+            decision_pub_->publish(goal_msg);
+        }
+    }
+
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr perception_sub_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr decision_pub_;
+};
+```
+
+## Summary
+
+ROS 2 provides the essential infrastructure for complex robotic systems, serving as the nervous system that connects all components. Its distributed architecture, quality of service controls, and rich ecosystem of tools make it ideal for humanoid robotics applications. Understanding these concepts is crucial for building reliable and scalable robotic systems.
+
+## Exercises
+
+1. Implement a simple publisher-subscriber pair that communicates sensor data with appropriate QoS settings
+2. Create a service that performs a mathematical computation and test it with a client
+3. Design an action server for a navigation task with appropriate feedback mechanisms
+4. Set up a multi-robot communication system using different domain IDs
+5. Implement lifecycle management for a robot controller node
+
+## References
+
+1. Faconti, P., et al. (2018). "ROS 2 Design Overview." *Open Robotics*.
+2. Quigley, M., et al. (2009). "ROS: an open-source Robot Operating System." *ICRA Workshop on Open Source Software*.
+3. Coltin, B., et al. (2014). "Interactive Robot Programming with Temporal Logic Specifications." *AAAI Conference on Artificial Intelligence*.
+4. Duckworth, P., et al. (2021). "A Survey of Long-Term Memory for Task and Motion Planning in Robotics." *IEEE Transactions on Robotics*.
+5. Siciliano, B., & Khatib, O. (2016). "Springer Handbook of Robotics." Springer.
+
+## Further Reading
+
+- ROS 2 Documentation: https://docs.ros.org/en/rolling/
+- DDS Specification: https://www.omg.org/spec/DDS/
+- Real-Time Systems in Robotics: Recent Advances and Challenges
